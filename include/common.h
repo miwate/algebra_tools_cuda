@@ -17,4 +17,15 @@
             } \
         } while(0)
 
+    /* Check kernel launch errors */
+    #define CUDA_CHECK_KERNEL() \
+        do { \
+            cudaError_t err = cudaGetLastError(); \
+            if (err != cudaSuccess) { \
+                fprintf(stderr, "CUDA kernel error at %s:%d - %s\n", __FILE__, __LINE__, \
+                        cudaGetErrorString(err)); \
+                exit(EXIT_FAILURE); \
+            } \
+        } while(0)
+
 #endif /* COMMON_H */

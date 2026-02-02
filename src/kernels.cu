@@ -19,7 +19,8 @@ __global__ void mat_vec_mul(const float* A, const float* v, float* result, int n
 
 __global__ void dot_prod(const float* v, const float* w, float* result, int n) {
 
-    __shared__ float cache[256];
+    // Dynamic shared memory - size specified at kernel launch
+    extern __shared__ float cache[];
 
     int tid = threadIdx.x;
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -51,7 +52,7 @@ __global__ void normalize(float* v, float norm, int n) {
 
     int i = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (i < n) {
+    if (i < n && norm > 1e-10f) {
         v[i] /= norm;
     }
 }

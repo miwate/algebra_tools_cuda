@@ -1,10 +1,11 @@
 #include "eigen_solver.h"
 #include "kernels.h"
+#include <time.h>
 
-float normL2(float* d_partial, int num_blocks) {
+float sumPartial(float* d_partial, int num_blocks) {
 
     float* h_partial = (float*) malloc(num_blocks * sizeof(float));
-    
+
     CUDA_CHECK(cudaMemcpy(
         h_partial, d_partial,
         num_blocks * sizeof(float),
@@ -18,7 +19,12 @@ float normL2(float* d_partial, int num_blocks) {
 
     free(h_partial);
 
-    return sqrtf(sum);
+    return sum;
+}
+
+
+float normL2(float* d_partial, int num_blocks) {
+    return sqrtf(sumPartial(d_partial, num_blocks));
 }
 
 
@@ -37,6 +43,9 @@ void power_iter(float* d_A, int n, float* lambda_out, float* v_out, int max_iter
 
     float *h_init = (float*) malloc(n * sizeof(float));
 
+    // Initialize random seed for varying initial vectors
+    srand((unsigned int)time(NULL));
+
     for (int i = 0; i < n; i++) {
         h_init[i] = (float)rand() / RAND_MAX;
     }
@@ -44,9 +53,15 @@ void power_iter(float* d_A, int n, float* lambda_out, float* v_out, int max_iter
     CUDA_CHECK(cudaMemcpy(d_v, h_init, n * sizeof(float), cudaMemcpyHostToDevice));
     free(h_init);
 
-    dot_prod<<<blocks, threads>>>(d_v, d_v, d_partial, n);
+    dot_prod<<<blocks, threads, threads * sizeof(float)>>>(d_v, d_v, d_partial, n);
+    CUDA_CHECK_KERNEL();
     float norm = normL2(d_partial, blocks);
+    if (norm < 1e-10f) {
+        fprintf(stderr, "Error: initial vector norm too small\n");
+        exit(EXIT_FAILURE);
+    }
     normalize<<<blocks, threads>>>(d_v, norm, n);
+    CUDA_CHECK_KERNEL();
     CUDA_CHECK(cudaDeviceSynchronize());
 
     float lambda_old = 0.0f;
@@ -56,18 +71,27 @@ void power_iter(float* d_A, int n, float* lambda_out, float* v_out, int max_iter
     for (int iter = 0; iter < max_iter; iter++) {
 
         mat_vec_mul<<<blocks, threads>>>(d_A, d_v, d_Av, n);
+        CUDA_CHECK_KERNEL();
         CUDA_CHECK(cudaDeviceSynchronize());
 
-        dot_prod<<<blocks, threads>>>(d_v, d_Av, d_partial, n);
-        lambda = normL2(d_partial, blocks);
+        dot_prod<<<blocks, threads, threads * sizeof(float)>>>(d_v, d_Av, d_partial, n);
+        CUDA_CHECK_KERNEL();
+        lambda = sumPartial(d_partial, blocks);
 
 
-        dot_prod<<<blocks, threads>>>(d_Av, d_Av, d_partial, n);
+        dot_prod<<<blocks, threads, threads * sizeof(float)>>>(d_Av, d_Av, d_partial, n);
+        CUDA_CHECK_KERNEL();
         norm = normL2(d_partial, blocks);
 
+        if (norm < 1e-10f) {
+            fprintf(stderr, "Warning: vector norm too small at iteration %d\n", iter);
+            break;
+        }
         normalize<<<blocks, threads>>>(d_Av, norm, n);
+        CUDA_CHECK_KERNEL();
 
         copy_vec<<<blocks, threads>>>(d_Av, d_v, n);
+        CUDA_CHECK_KERNEL();
         CUDA_CHECK(cudaDeviceSynchronize());
 
         if (iter > 0 && fabsf(lambda - lambda_old) < tol) {
